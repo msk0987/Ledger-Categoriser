@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ledger Categorizer — Free, Offline</title>
+  <style>
+    :root{
+      --bg:#0f172a; /* slate-900 */
+      --panel:#111827; /* gray-900 */
+      --muted:#94a3b8; /* slate-400 */
+      --text:#e5e7eb; /* gray-200 */
+      --accent:#22c55e; /* green-500 */
+      --warn:#ef4444; /* red-500 */
+      --card:#1f2937; /* gray-800 */
+      --border:#334155; /* slate-700 */
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:linear-gradient(180deg,#0b1224,#0f172a 25%);color:var(--text);font:16px/1.45 system-ui,Segoe UI,Roboto,Helvetica,Arial}
+    header{padding:20px 16px;border-bottom:1px solid var(--border);background:rgba(17,24,39,.6);backdrop-filter: blur(6px);position:sticky;top:0;z-index:3}
+    h1{margin:0;font-size:20px;letter-spacing:.3px}
+    main{max-width:1100px;margin:18px auto;padding:0 16px 40px}
+    .row{display:flex;gap:16px;flex-wrap:wrap}
+    .card{background:var(--panel);border:1px solid var(--border);border-radius:16px;box-shadow:0 6px 24px rgba(0,0,0,.25)}
+    .controls{padding:14px 16px;display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+    .controls > *{flex:none}
+    .btn{appearance:none;border:1px solid var(--border);background:var(--card);color:var(--text);padding:10px 14px;border-radius:12px;cursor:pointer;transition:.15s;}
+    .btn:hover{transform:translateY(-1px);box-shadow:0 6px 16px rgba(0,0,0,.25)}
+    .btn.primary{border-color:#16a34a;background:#16a34a;color:#04120a}
+    .btn.ghost{background:transparent}
+    input[type=file]{display:none}
+    label.file{border:1px dashed var(--border);padding:10px 14px;border-radius:12px;cursor:pointer}
+    .pill{padding:6px 10px;border:1px solid var(--border);border-radius:999px;color:var(--muted);font-size:12px}
+    .grid{display:grid;grid-template-columns:repeat(4,minmax(230px,1fr));gap:16px;margin-top:16px}
+    .bucket{min-height:300px;background:var(--panel);border:1px dashed var(--border);border-radius:16px;padding:10px;position:relative}
+    .bucket h3{margin:8px 10px 12px;font-size:14px;color:#cbd5e1}
+    .bucket .dropzone{min-height:230px;padding:8px;border-radius:12px}
+    .bucket.correct{border-color:#22c55e}
+    .bucket.wrong{border-color:#ef4444}
+    .card-item{user-select:none;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin:8px;cursor:grab;box-shadow:0 4px 10px rgba(0,0,0,.2)}
+    .card-item.dragging{opacity:.65;transform:scale(.98)}
+    .stack{background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:8px;margin-top:16px;display:flex;flex-wrap:wrap;gap:8px;min-height:64px}
+    .tag{font-size:12px;color:var(--muted)}
+    .stats{display:flex;gap:12px;align-items:center}
+    .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#111827;border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:.25s}
+    .toast.show{opacity:1}
+    .hidden{display:none}
+    .small{font-size:12px;color:var(--muted)}
+    .textarea{width:100%;min-height:110px;background:var(--card);border:1px solid var(--border);border-radius:12px;color:var(--text);padding:10px}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Ledger Categorizer — Asset • Liability • Income • Expense</h1>
+  </header>
+  <main>
+    <section class="card">
+      <div class="controls">
+        <label class="file" for="file">Upload CSV</label>
+        <input id="file" type="file" accept=".csv" />
+        <button class="btn" id="sample">Load Sample</button>
+        <button class="btn" id="clear">Clear Items</button>
+        <button class="btn ghost" id="shuffle">Shuffle</button>
+        <span class="pill" id="count">0 items</span>
+        <span class="pill" id="score">Score: 0 / 0</span>
+        <span class="pill" id="mode">Mode: Drag & Drop</span>
+        <span class="small">Drop a card into a bucket. If wrong, it will show the correct bucket and auto-move.</span>
+      </div>
+    </section>
+
+    <section class="row">
+      <div class="card" style="flex:1 1 340px;padding:14px">
+        <div class="tag">Paste CSV (optional)
+          <details class="small"><summary>Format help</summary>
+            Two columns: <b>Ledger, Category</b>. Category must be one of <b>Asset, Liability, Income, Expense</b>. Header row optional.
+            <pre class="small" style="white-space:pre-wrap;background:#0b1224;border:1px solid var(--border);border-radius:8px;padding:8px;">Bank Charges, Expense
+Accounts Receivable, Asset
+GST Payable, Liability
+Sales, Income</pre>
+          </details>
+        </div>
+        <textarea class="textarea" id="paste"></textarea>
+        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn primary" id="addFromPaste">Add From Paste</button>
+          <button class="btn" id="exportCsv">Export Current CSV</button>
+        </div>
+      </div>
+
+      <div class="card" style="flex:2 1 600px;padding:14px">
+        <div class="tag">Unsorted Cards</div>
+        <div id="stack" class="stack" aria-label="Unsorted ledgers" ></div>
+      </div>
+    </section>
+
+    <section class="grid" aria-label="Buckets grid">
+      <div class="bucket" data-bucket="Asset" aria-label="Asset bucket">
+        <h3>Asset</h3>
+        <div class="dropzone" data-zone="Asset"></div>
+      </div>
+      <div class="bucket" data-bucket="Liability" aria-label="Liability bucket">
+        <h3>Liability</h3>
+        <div class="dropzone" data-zone="Liability"></div>
+      </div>
+      <div class="bucket" data-bucket="Income" aria-label="Income bucket">
+        <h3>Income</h3>
+        <div class="dropzone" data-zone="Income"></div>
+      </div>
+      <div class="bucket" data-bucket="Expense" aria-label="Expense bucket">
+        <h3>Expense</h3>
+        <div class="dropzone" data-zone="Expense"></div>
+      </div>
+    </section>
+
+    <section class="card" style="margin-top:16px;padding:14px">
+      <div class="stats">
+        <div class="pill" id="remaining">Remaining: 0</div>
+        <div class="pill" id="accuracy">Accuracy: 0%</div>
+        <div class="pill" id="historyBtn" style="cursor:pointer">Toggle History</div>
+      </div>
+      <div id="history" class="hidden small" style="margin-top:10px;max-height:180px;overflow:auto;border-top:1px dashed var(--border);padding-top:10px"></div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function(){
+  const stackEl = document.getElementById('stack');
+  const countEl = document.getElementById('count');
+  const remainingEl = document.getElementById('remaining');
+  const scoreEl = document.getElementById('score');
+  const accuracyEl = document.getElementById('accuracy');
+  const toast = document.getElementById('toast');
+  const historyEl = document.getElementById('history');
+  const historyBtn = document.getElementById('historyBtn');
+
+  const ZONES = ['Asset','Liability','Income','Expense'];
+  /** @type {{id:string, text:string, answer:string}[]} */
+  let items = [];
+  let score = 0, attempted = 0;
+
+  const uid = () => Math.random().toString(36).slice(2,9);
+
+  function showToast(msg, ok){
+    toast.textContent = msg;
+    toast.style.borderColor = ok ? '#16a34a' : '#ef4444';
+    toast.classList.add('show');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(()=>toast.classList.remove('show'), 1400);
+  }
+
+  function renderCounters(){
+    countEl.textContent = `${items.length} items`;
+    const remaining = stackEl.querySelectorAll('.card-item').length;
+    remainingEl.textContent = `Remaining: ${remaining}`;
+    scoreEl.textContent = `Score: ${score} / ${attempted}`;
+    const acc = attempted ? Math.round((score/attempted)*100) : 0;
+    accuracyEl.textContent = `Accuracy: ${acc}%`;
+  }
+
+  function makeCard(it){
+    const el = document.createElement('div');
+    el.className = 'card-item';
+    el.textContent = it.text;
+    el.setAttribute('draggable','true');
+    el.dataset.id = it.id;
+    el.addEventListener('dragstart', e=>{
+      el.classList.add('dragging');
+      e.dataTransfer.setData('text/plain', it.id);
+    });
+    el.addEventListener('dragend', ()=>{
+      el.classList.remove('dragging');
+    });
+    return el;
+  }
+
+  function renderStack(){
+    stackEl.innerHTML = '';
+    items.forEach(it=> stackEl.appendChild(makeCard(it)));
+    renderCounters();
+  }
+
+  function parseCSV(text){
+    // simple CSV parser (2 columns). handles quoted commas.
+    const lines = text.split(/\r?\n/).filter(Boolean);
+    const out = [];
+    for(let i=0;i<lines.length;i++){
+      const row = lines[i];
+      // Split by commas not inside quotes
+      const cols = [];
+      let cur = '', inQ = false;
+      for (let ch of row){
+        if (ch === '"') { inQ = !inQ; continue; }
+        if (ch === ',' && !inQ){ cols.push(cur.trim()); cur=''; }
+        else cur+=ch;
+      }
+      cols.push(cur.trim());
+      if (cols.length < 2) continue;
+      const [ledger, cat] = cols;
+      const norm = (cat||'').trim();
+      if (!ledger) continue;
+      if (!ZONES.includes(norm)) continue; // skip invalid categories
+      out.push({ id: uid(), text: ledger.trim(), answer: norm });
+    }
+    return out;
+  }
+
+  function toCSV(){
+    const rows = items.map(it=>`"${it.text.replace(/"/g,'""')}",${it.answer}`);
+    return 'Ledger,Category\n' + rows.join('\n');
+  }
+
+  // Drag & drop wiring
+  document.querySelectorAll('.dropzone').forEach(zone=>{
+    const bucket = zone.dataset.zone;
+    zone.addEventListener('dragover', e=>{ e.preventDefault(); });
+    zone.addEventListener('drop', e=>{
+      e.preventDefault();
+      const id = e.dataTransfer.getData('text/plain');
+      const card = document.querySelector(`.card-item[data-id="${id}"]`);
+      if(!card) return;
+      const it = items.find(x=>x.id===id);
+      attempted++;
+      if (it.answer === bucket){
+        score++;
+        zone.appendChild(card);
+        showToast('✅ Correct', true);
+        flashBucket(bucket, true);
+        pushHistory(it.text, bucket, true, bucket);
+      } else {
+        // wrong: momentarily show red, then move to correct bucket
+        flashBucket(bucket, false);
+        pushHistory(it.text, bucket, false, it.answer);
+        showToast(`❌ Incorrect — Correct: ${it.answer}`, false);
+        setTimeout(()=>{
+          const correctZone = document.querySelector(`.dropzone[data-zone="${it.answer}"]`);
+          if (correctZone) correctZone.appendChild(card);
+        }, 600);
+      }
+      renderCounters();
+    });
+  });
+
+  function flashBucket(bucket, ok){
+    const el = document.querySelector(`.bucket[data-bucket="${bucket}"]`);
+    el.classList.add(ok ? 'correct' : 'wrong');
+    setTimeout(()=> el.classList.remove('correct','wrong'), 650);
+  }
+
+  function pushHistory(text, chosen, ok, correct){
+    const row = document.createElement('div');
+    row.innerHTML = ok
+      ? `✅ <b>${escapeHtml(text)}</b> → <span class="small">${chosen}</span>`
+      : `❌ <b>${escapeHtml(text)}</b> → <span class="small">${chosen}</span> • <i>Correct: ${correct}</i>`;
+    historyEl.prepend(row);
+  }
+
+  function escapeHtml(s){
+    return s.replace(/[&<>\"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+  }
+
+  // Buttons & inputs
+  document.getElementById('sample').addEventListener('click', ()=>{
+    const sample = `Ledger,Category
+"Cash in Hand",Asset
+"Petty Cash",Asset
+"Savings Bank - SBI",Asset
+"Current Account - HDFC",Asset
+"Fixed Deposit - 1 Year",Asset
+"Accounts Receivable",Asset
+"Debtors - Retail",Asset
+"Debtors - Wholesale",Asset
+"Advances to Staff",Asset
+"Employee Travel Advance",Asset
+"Input CGST",Asset
+"Input SGST",Asset
+"Input IGST",Asset
+"Input Cess",Asset
+"GST Refund Receivable",Asset
+"TDS Receivable",Asset
+"Prepaid Insurance",Asset
+"Prepaid Rent",Asset
+"Prepaid Expenses",Asset
+"Security Deposit - Electricity",Asset
+"Security Deposit - Office",Asset
+"Inventory - Raw Materials",Asset
+"Inventory - Finished Goods",Asset
+"Inventory - Consumables",Asset
+"Tools & Equipment",Asset
+"Furniture & Fixtures",Asset
+"Computers & Laptops",Asset
+"Office Printers",Asset
+"Air Conditioners",Asset
+"Vehicles",Asset
+"Building",Asset
+"Land",Asset
+"Capital Work in Progress",Asset
+"Investments - Equity",Asset
+"Investments - Mutual Funds",Asset
+"Input VAT (Legacy)",Asset
+"Input Service Tax (Legacy)",Asset
+"Input GST - RCM",Asset
+"Accrued Interest Receivable",Asset
+"Loan to Director",Asset
+"Loan to Subsidiary",Asset
+"Advance to Supplier",Asset
+"Mobile Deposits",Asset
+"GST TCS Receivable",Asset
+"Accounts Payable",Liability
+"Creditors - Raw Materials",Liability
+"Creditors - Services",Liability
+"Outstanding Expenses",Liability
+"Wages Payable",Liability
+"Salary Payable",Liability
+"Bonus Payable",Liability
+"Professional Tax Payable",Liability
+"ESI Payable",Liability
+"EPF Payable",Liability
+"GST Payable",Liability
+"Output CGST",Liability
+"Output SGST",Liability
+"Output IGST",Liability
+"Output Cess",Liability
+"TDS Payable",Liability
+"TCS Payable",Liability
+"Advance from Customers",Liability
+"Unearned Revenue",Liability
+"Security Deposit from Customer",Liability
+"Accrued Expenses",Liability
+"Interest Payable",Liability
+"Bank Overdraft",Liability
+"Cash Credit (CC)",Liability
+"Term Loan - SBI",Liability
+"Vehicle Loan",Liability
+"Mortgage Loan",Liability
+"Director Current Account",Liability
+"Partner Current Account",Liability
+"Share Application Money",Liability
+"Provision for Income Tax",Liability
+"Provision for Doubtful Debts",Liability
+"Provision for Warranty",Liability
+"Capital Subsidy Deferred Income",Liability
+"Deferred Tax Liability",Liability
+"Lease Liability",Liability
+"Gratuity Provision",Liability
+"Leave Encashment Provision",Liability
+"Vendor TDS RCM Payable",Liability
+"Outstanding RCM Liability",Liability
+"Sales - Domestic",Income
+"Sales - Export",Income
+"Sales - Services",Income
+"Sales - Online",Income
+"Commission Income",Income
+"Interest Income",Income
+"Discount Received",Income
+"Foreign Exchange Gain",Income
+"Scrap Sales",Income
+"Rental Income",Income
+"Consultancy Income",Income
+"Training Income",Income
+"Maintenance Income",Income
+"Royalty Income",Income
+"Liability Written Back",Income
+"Bad Debts Recovered",Income
+"Miscellaneous Income",Income
+"Round Off (Cr)",Income
+"Dividend Income",Income
+"Sale of Asset Profit",Income
+"Shipping Income Recovered",Income
+"Packaging Charges Recovered",Income
+"E-way Bill Charges Recovered",Income
+"Late Fee Recovered",Income
+"Service Income - AMC",Income
+"Job Work Income",Income
+"Processing Charges Income",Income
+"Data Entry Income",Income
+"Subscription Income",Income
+"Affiliate Income",Income
+"Sponsorship Income",Income
+"Advertising Income",Income
+"Course Fee Income",Income
+"Exam Fee Income",Income
+"API Usage Income",Income
+"Purchases - Raw Materials",Expense
+"Purchases - Consumables",Expense
+"Purchases - Trading Goods",Expense
+"Power & Fuel",Expense
+"Electricity Charges",Expense
+"Office Rent",Expense
+"Factory Rent",Expense
+"Repairs & Maintenance - Building",Expense
+"Repairs & Maintenance - Machinery",Expense
+"Repairs & Maintenance - Computers",Expense
+"Insurance Expense",Expense
+"Telephone & Internet",Expense
+"Postage & Courier",Expense
+"Printing & Stationery",Expense
+"Travel & Conveyance",Expense
+"Vehicle Running Expenses",Expense
+"Staff Welfare",Expense
+"Salaries & Wages",Expense
+"Bonus Expense",Expense
+"Gratuity Expense",Expense
+"Professional Fees",Expense
+"Audit Fees",Expense
+"Legal Charges",Expense
+"Bank Charges",Expense
+"Interest Expense",Expense
+"Commission Paid",Expense
+"Discount Allowed",Expense
+"Bad Debts",Expense
+"Rent Rates & Taxes",Expense
+"Property Tax",Expense
+"Water Charges",Expense
+"Housekeeping Expenses",Expense
+"Security Charges",Expense
+"Training & Seminar",Expense
+"Software Subscription",Expense
+"AMC - IT",Expense
+"Licenses & Renewals",Expense
+"GST Expense (Non-creditable)",Expense
+"RCM Expense",Expense
+"CSR Expense",Expense
+"Repairs & Maintenance - Office",Expense
+"Website Hosting",Expense
+"Domain Registration",Expense
+"Depreciation Expense",Expense
+"Round Off (Dr)",Expense
+"Payment Gateway Charges",Expense
+"Courier Inward",Expense
+"Packing Materials",Expense
+"Marketing & Promotion",Expense
+"Refreshments",Expense`;
+    items = parseCSV(sample);
+    score = 0; attempted = 0; historyEl.innerHTML='';
+    renderStack();
+  });
+
+  document.getElementById('clear').addEventListener('click', ()=>{
+    items = []; score=0; attempted=0; historyEl.innerHTML='';
+    stackEl.innerHTML='';
+    renderCounters();
+  });
+
+  document.getElementById('shuffle').addEventListener('click', ()=>{
+    items.sort(()=>Math.random()-.5);
+    renderStack();
+  });
+
+  document.getElementById('addFromPaste').addEventListener('click', ()=>{
+    const text = document.getElementById('paste').value.trim();
+    if(!text){ showToast('Paste CSV first', false); return; }
+    const newItems = parseCSV(text);
+    if(!newItems.length){ showToast('No valid rows found (check categories)', false); return; }
+    items = items.concat(newItems);
+    document.getElementById('paste').value = '';
+    renderStack();
+  });
+
+  document.getElementById('exportCsv').addEventListener('click', ()=>{
+    if(!items.length){ showToast('Nothing to export', false); return; }
+    const blob = new Blob([toCSV()], {type:'text/csv;charset=utf-8'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'ledger_items.csv';
+    a.click();
+  });
+
+  document.getElementById('file').addEventListener('change', (e)=>{
+    const f = e.target.files[0];
+    if(!f) return;
+    const r = new FileReader();
+    r.onload = () => {
+      const text = String(r.result||'');
+      const newItems = parseCSV(text);
+      if(!newItems.length){ showToast('No valid rows found (need Ledger,Category)', false); return; }
+      items = newItems;
+      score = 0; attempted = 0; historyEl.innerHTML='';
+      renderStack();
+    }
+    r.readAsText(f);
+    e.target.value = '';
+  });
+
+  historyBtn.addEventListener('click',()=>{
+    historyEl.classList.toggle('hidden');
+  })
+
+  // init with sample for convenience
+  document.getElementById('sample').click();
+})();
+</script>
+</body>
+</html>
